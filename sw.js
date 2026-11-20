@@ -1,5 +1,5 @@
 // Service worker Hội Quán Party Game v4.0 — Tối ưu hóa hoàn toàn cho Shell, Media & Audio Range requests.
-const SHELL_CACHE = 'hoiquan-shell-v4.0-4';
+const SHELL_CACHE = 'hoiquan-shell-v4.0-5';
 const MEDIA_CACHE = 'hoiquan-media-v4.0-1';
 const MAX_MEDIA_ENTRIES = 120;
 

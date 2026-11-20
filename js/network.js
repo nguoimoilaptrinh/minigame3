@@ -11,7 +11,7 @@
 //    để game module JOIN lại và nhận đồng bộ đầy đủ. Có watchdog cho "socket zombie" của iOS.
 //  * Ba kênh độc lập, kênh nào lỗi / thiếu (CDN hỏng) cũng không ảnh hưởng kênh còn lại và không bao giờ throw.
 window.RoomNetwork = (() => {
-  const PREFIX = 'hoiquan-party-v3-k7x2m9';
+  const PREFIX = 'hoiquan-party-v4-m9x4k2';
   const ROOM_ID = 'hoiquan';
   const ROOM_LABEL = 'Hội Quán';
   const MQTT_BROKER_URL = 'wss://broker.emqx.io:8084/mqtt';
@@ -73,8 +73,31 @@ window.RoomNetwork = (() => {
     return id;
   }
 
-  const CLUB_STORAGE_KEY = 'hq_club_key';
-  const DEFAULT_CLUB = 'hoiquan';
+  const CLUB_STORAGE_KEY = 'hq_club_key_v4';
+
+  function computeSiteClubKey() {
+    try {
+      const loc = window.location || {};
+      const rawPath = String(loc.pathname || '/')
+        .replace(/\/index\.html$/i, '/')
+        .replace(/\/+$/, '');
+      const seed = `${String(loc.origin || 'hoiquan').toLowerCase()}${rawPath.toLowerCase()}`;
+      let h = 2166136261;
+      for (let i = 0; i < seed.length; i++) {
+        h ^= seed.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      const code = (h >>> 0).toString(36).slice(0, 6).padStart(6, '0');
+      return 'hq_' + code;
+    } catch (_) {
+      return 'hq_hoiquan';
+    }
+  }
+
+  const DEFAULT_CLUB = computeSiteClubKey();
+  try {
+    window.localStorage.removeItem('hq_club_key');
+  } catch (_) {}
 
   function sanitizeClubKey(raw) {
     return String(raw == null ? '' : raw)
@@ -120,15 +143,15 @@ window.RoomNetwork = (() => {
   }
 
   function ensureHostClubKey() {
-    const fromUrl = readClubKeyFromUrl();
-    if (fromUrl) return fromUrl;
-    const saved = readClubKeyFromStorage();
-    if (saved) return saved;
-    return resetClubKey();
+    const key = getClubKey();
+    try {
+      window.localStorage.setItem(CLUB_STORAGE_KEY, key);
+    } catch (_) {}
+    return key;
   }
 
   function resetClubKey() {
-    const generated = 'hq_' + rand().slice(0, 6);
+    const generated = DEFAULT_CLUB;
     try {
       window.localStorage.setItem(CLUB_STORAGE_KEY, generated);
     } catch (_) {}
