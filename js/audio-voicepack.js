@@ -123,6 +123,23 @@
     ) {
       return { key: 'night_start', dramaticReveal: false };
     }
+    // Câu "… đã chọn xong. Xin mời … nhắm mắt lại." — phải dùng đúng giọng đã chọn
+    if (t.includes('nhắm mắt lại') && t.includes('xin mời')) {
+      const sleepRoles = [
+        ['thần tình yêu', 'sleep_cupid'],
+        ['bảo vệ', 'sleep_guard'],
+        ['sói đầu đàn', 'sleep_alpha_wolf'],
+        ['ma sói', 'sleep_werewolf'],
+        ['bầy sói', 'sleep_werewolf'],
+        ['tiên tri', 'sleep_seer'],
+        ['thám tử', 'sleep_detective'],
+        ['phù thủy', 'sleep_witch'],
+        ['pháp sư câm', 'sleep_spellcaster'],
+        ['sát nhân', 'sleep_serial_killer']
+      ];
+      const hit = sleepRoles.find(([role]) => t.includes(`xin mời ${role} nhắm mắt`));
+      if (hit) return { key: hit[1], dramaticReveal: false };
+    }
     if (t.includes('thần tình yêu ơi')) {
       return { key: 'call_cupid', dramaticReveal: false };
     }

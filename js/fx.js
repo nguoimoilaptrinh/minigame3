@@ -414,10 +414,12 @@
 
     _doc.querySelectorAll('#ww-pl-toggle-card, #spy-toggle-card').forEach(bindTilt);
 
-    // Tiếng "tách" nhẹ khi bấm các nút chính
+    // Tiếng "tách" nhẹ khi bấm các nút chính — KHÔNG phát trên điện thoại khi đang trong ván:
+    // ban đêm mọi người nhắm mắt nghe Bot, tiếng bấm của điện thoại sẽ làm lộ ai đang hành động.
     _doc.addEventListener('pointerdown', (e) => {
       const btn = e.target.closest?.('.btn');
       if (!btn || btn.disabled) return;
+      if (isMobileDevice() && isInActiveGame()) return;
       if (_win.AudioEngine) _win.AudioEngine.playUi();
     });
   }
