@@ -196,15 +196,18 @@ window.WWViews = (() => {
         p.appendChild(el('div', 'wwv-extra-rule wwv-extra-dead', '💔 Người yêu đã mất'));
       } else {
         p.appendChild(el('div', 'wwv-extra-rule', lover.sameSide
-          ? 'Hai bạn cùng phe. Một người chết, người kia chết theo.'
-          : 'Hai bạn KHÁC PHE → thành phe Cặp Đôi: chỉ thắng khi 2 bạn là 2 người sống sót cuối cùng. Một người chết, người kia chết theo.'));
+          ? 'Hai bạn cùng phe. Một người chết, người kia chết theo. Ban đêm vẫn ngủ/thức đúng theo vai gốc của mình.'
+          : 'Hai bạn KHÁC PHE → thành phe Cặp Đôi: thắng khi 2 bạn sống sót cuối cùng (1 người chết, người kia chết theo). Lưu ý: Tình nhân với Sói KHÔNG thức dậy cùng bầy Sói!'));
       }
       root.appendChild(p);
     }
 
     if (converted) {
       const p = el('div', 'wwv-extra wwv-extra-cursed');
-      p.appendChild(el('div', 'wwv-extra-title', '🩸 Bạn đã bị Sói Đầu Đàn NGUYỀN — từ giờ bạn là MA SÓI!'));
+      const convertedTitle = vm.convertedReason === 'cursed'
+        ? '🌘 Dòng máu Bán Sói đã THỨC TỈNH — từ giờ bạn là MA SÓI!'
+        : '🩸 Bạn đã bị Sói Đầu Đàn NGUYỀN — từ giờ bạn là MA SÓI!';
+      p.appendChild(el('div', 'wwv-extra-title', convertedTitle));
       root.appendChild(p);
     }
 
@@ -230,6 +233,7 @@ window.WWViews = (() => {
     opts = opts || {};
     const tone = ['primary', 'danger', 'success'].indexOf(opts.tone) >= 0 ? opts.tone : 'primary';
     const bar = el('div', 'sticky-action-bar wwv-confirm-bar');
+    bar._onConfirm = typeof opts.onConfirm === 'function' ? opts.onConfirm : null;
     if (!opts.enabled) {
       bar.appendChild(el('div', 'wwv-confirm-hint', opts.hint || '👆 Hãy chọn ở phía trên trước'));
     }
@@ -247,7 +251,7 @@ window.WWViews = (() => {
       btn.disabled = true;
       btn.classList.remove('btn-attention', 'wwv-attention');
       btn.textContent = '⏳ Đang gửi…';
-      if (typeof opts.onConfirm === 'function') opts.onConfirm();
+      if (typeof bar._onConfirm === 'function') bar._onConfirm();
     });
     bar.appendChild(btn);
     if (container) container.appendChild(bar);
@@ -303,6 +307,8 @@ window.WWViews = (() => {
       tile.appendChild(av);
 
       const nm = el('div', 'wwv-tile-name', p.name);
+      if (p.sheriff) nm.appendChild(el('span', 'wwv-tag-sheriff', '👑'));
+      if (p.silenced && !dead) nm.appendChild(el('span', 'wwv-tag-silenced', '🤐'));
       if (p.isDemo) nm.appendChild(el('span', 'wwv-tag-bot', 'bot'));
       tile.appendChild(nm);
 

@@ -132,8 +132,42 @@
     return ctx;
   }
 
+  const SILENT_WAV = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+  let cloudAudioUnlocked = false;
+
   function unlock() {
-    ensureContext();
+    const ac = ensureContext();
+    if (typeof window !== 'undefined' && window.VoicePack && typeof window.VoicePack.unlock === 'function') {
+      try {
+        window.VoicePack.unlock(ac);
+      } catch (_) {}
+    }
+    if (!cloudAudioUnlocked && typeof Audio === 'function' && !currentAudioEl) {
+      try {
+        if (!cloudAudioEl) cloudAudioEl = new Audio();
+        cloudAudioEl.muted = true;
+        cloudAudioEl.src = SILENT_WAV;
+        const p = cloudAudioEl.play();
+        if (p && typeof p.then === 'function') {
+          p.then(() => {
+            try {
+              cloudAudioEl.pause();
+              cloudAudioEl.currentTime = 0;
+              cloudAudioEl.muted = false;
+              cloudAudioUnlocked = true;
+            } catch (_) {}
+          }).catch(() => {
+            try {
+              cloudAudioEl.muted = false;
+            } catch (_) {}
+          });
+        } else {
+          cloudAudioEl.pause();
+          cloudAudioEl.muted = false;
+          cloudAudioUnlocked = true;
+        }
+      } catch (_) {}
+    }
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       loadVoices();
       try {
@@ -519,7 +553,7 @@
     ];
   }
 
-  function speakWithBrowser(text, token, onDone) {
+  function speakWithBrowser(text, token, onDone, opts = {}) {
     if (token !== currentSpeakToken) return;
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
       emitWarning('Trình duyệt không hỗ trợ giọng đọc. Bot sẽ hiển thị phụ đề thay thế.');
@@ -527,9 +561,10 @@
       return;
     }
 
+    const allVoices = getVoices();
     const viVoice = findBestVietnameseVoice();
-    if (!viVoice) {
-      // KHÔNG dùng giọng tiếng Anh để đọc tiếng Việt. Chỉ hiển thị phụ đề.
+    // Nếu trình duyệt đã trả danh sách giọng đầy đủ nhưng KHÔNG có bất kỳ giọng Việt nào (và không ép đọc), tránh đọc bằng giọng tiếng Anh
+    if (!viVoice && allVoices.length > 0 && !opts.allowLangFallback) {
       emitWarning(
         'Thiết bị chưa cài giọng Tiếng Việt và không kết nối được Cloud TTS. Hãy bật mạng hoặc cài gói giọng nói Tiếng Việt trong Cài đặt hệ điều hành.'
       );
@@ -566,19 +601,31 @@
       utter.lang = 'vi-VN';
       utter.rate = config.rate;
       utter.pitch = config.pitch;
-      utter.voice = findBestVietnameseVoice() || viVoice;
+      const pickedVoice = findBestVietnameseVoice() || viVoice;
+      if (pickedVoice) utter.voice = pickedVoice;
 
       let finished = false;
+      const keepAlive = setInterval(() => {
+        if (finished || token !== currentSpeakToken) {
+          clearInterval(keepAlive);
+          return;
+        }
+        try {
+          if (window.speechSynthesis.paused && !isPaused) window.speechSynthesis.resume();
+        } catch (_) {}
+      }, 5000);
       const guard = setTimeout(() => {
         if (finished) return;
         finished = true;
+        clearInterval(keepAlive);
         speakNext();
-      }, Math.max(2600, Math.min(12000, chunk.length * 150)));
+      }, Math.max(3200, Math.min(14000, chunk.length * 160)));
 
       const complete = () => {
         if (finished) return;
         finished = true;
         clearTimeout(guard);
+        clearInterval(keepAlive);
         if (token !== currentSpeakToken) return;
         setTimeout(speakNext, 90);
       };
@@ -609,8 +656,8 @@
 
     const fallbackToBrowser = (fromIndex) => {
       if (token !== currentSpeakToken) return;
-      if (hasVietnameseVoice()) {
-        speakWithBrowser(chunks.slice(fromIndex).join(' '), token, onDone);
+      if (hasVietnameseVoice() || getVoices().length === 0) {
+        speakWithBrowser(chunks.slice(fromIndex).join(' '), token, onDone, { allowLangFallback: true });
       } else {
         emitWarning(
           'Không tải được giọng đọc Cloud Tiếng Việt. Bot sẽ hiển thị phụ đề để mọi người vẫn theo dõi ván chơi.'
@@ -641,6 +688,7 @@
       audio.onended = null;
       audio.onerror = null;
       audio.onloadedmetadata = null;
+      audio.muted = false;
       audio.src = url;
       audio.preload = 'auto';
       audio.referrerPolicy = 'no-referrer';
@@ -656,8 +704,12 @@
           audio.pause();
         } catch (_) {}
         currentAudioEl = null;
-        fallbackToBrowser(index);
-      }, Math.max(5000, Math.min(9000, 3500 + chunk.length * 20)));
+        if (endpointIndex + 1 < Math.min(2, urls.length)) {
+          playChunk(endpointIndex + 1);
+        } else {
+          fallbackToBrowser(index);
+        }
+      }, Math.max(3200, Math.min(5500, 2400 + chunk.length * 14)));
 
       // Khi đã có metadata, canh thời gian chính xác theo độ dài file thật.
       audio.onloadedmetadata = () => {
@@ -749,7 +801,7 @@
       if (onEnd) onEnd();
     };
 
-    if (!config.voice) {
+    if (!config.voice && !opts.forceSpeak) {
       emitWarning('Giọng đọc đang TẮT. Mở “Giọng & Âm thanh” và tích “Bật giọng đọc Tiếng Việt” để Bot đọc bài.');
       finishSilently(text || '', token, onEnd);
       return;
@@ -761,6 +813,12 @@
     }
 
     emitSpeakState(true);
+    try {
+      ensureContext();
+      if (typeof window !== 'undefined' && window.VoicePack && typeof window.VoicePack.unlock === 'function') {
+        window.VoicePack.unlock(ctx);
+      }
+    } catch (_) {}
 
     const fallbackToV33 = () => {
       if (token !== currentSpeakToken) return;
@@ -774,16 +832,19 @@
           onStart();
         } catch (_) {}
       }
-      if (config.mode === 'browser') {
-        if (hasVietnameseVoice()) speakWithBrowser(text, token, done);
-        else speakCloud(text, token, done);
+      if (opts.preferBrowser || config.mode === 'browser') {
+        if (hasVietnameseVoice() || getVoices().length === 0 || opts.allowLangFallback) {
+          speakWithBrowser(text, token, done, { allowLangFallback: Boolean(opts.allowLangFallback) });
+        } else {
+          speakCloud(text, token, done);
+        }
         return;
       }
       if (config.mode === 'cloud') {
         speakCloud(text, token, done);
         return;
       }
-      // Chế độ tự động / fallback từ Studio: ưu tiên Neural Tiếng Việt (Edge), sau đó Cloud Tiếng Việt.
+      // Chế độ tự động / fallback từ Studio: ưu tiên Neural Tiếng Việt (Edge), sau đó Cloud, cuối cùng giọng Việt trình duyệt.
       const bestVoice = findBestVietnameseVoice();
       const isNeural = Boolean(bestVoice && /natural|neural|online/i.test(bestVoice.name));
       if (bestVoice && (isNeural || config.manualVoice)) {
@@ -795,6 +856,7 @@
 
     const vp = typeof window !== 'undefined' ? window.VoicePack : null;
     const explicitV33 =
+      Boolean(opts.preferBrowser) ||
       opts.voiceKey === 'v33_online' ||
       opts.voiceKey === 'browser' ||
       opts.voiceKey === 'cloud' ||
@@ -807,15 +869,41 @@
       if (opts.promptKey || opts.audioFile) {
         matched = {
           key: opts.promptKey || 'custom',
-          dramaticReveal: Boolean(Number(opts.dramaticPauseMs) > 0)
+          dramaticReveal: Boolean(opts.dramaticReveal || Number(opts.dramaticPauseMs) > 0)
         };
       } else if (typeof vp.matchPromptKey === 'function') {
         matched = vp.matchPromptKey(text);
       }
 
-      if (matched) {
+      if (matched && (opts.audioFile || typeof vp.hasPrompt !== 'function' || vp.hasPrompt(matched.key, opts.voiceKey || config.mode))) {
         const useDramatic = Boolean(matched.dramaticReveal || Number(opts.dramaticPauseMs) > 0);
         const pauseMs = Number(opts.dramaticPauseMs) > 0 ? Number(opts.dramaticPauseMs) : 800;
+        const followUps = Array.isArray(opts.followUpKeys) ? opts.followUpKeys.filter(Boolean) : [];
+        let followIndex = 0;
+
+        const playFollowUpOrFinish = () => {
+          if (token !== currentSpeakToken) return;
+          while (
+            followIndex < followUps.length &&
+            typeof vp.hasPrompt === 'function' &&
+            !vp.hasPrompt(followUps[followIndex], opts.voiceKey || config.mode)
+          ) {
+            followIndex += 1;
+          }
+          if (followIndex < followUps.length) {
+            const nextKey = followUps[followIndex];
+            followIndex += 1;
+            vp.playPrompt(nextKey, {
+              voiceKey: opts.voiceKey || config.mode,
+              rate: config.rate,
+              onEnd: playFollowUpOrFinish,
+              onError: playFollowUpOrFinish
+            });
+            return;
+          }
+          done();
+        };
+
         vp.playPrompt(matched.key, {
           voiceKey: opts.voiceKey || config.mode,
           audioFile: opts.audioFile,
@@ -828,9 +916,9 @@
             if (token !== currentSpeakToken) return;
             if (useDramatic) {
               playHeartbeat();
-              scheduleDramaticTimer(done, pauseMs, token);
+              scheduleDramaticTimer(playFollowUpOrFinish, pauseMs, token);
             } else {
-              done();
+              playFollowUpOrFinish();
             }
           },
           onError: () => {
@@ -1198,6 +1286,14 @@
     pauseAllAudio: pauseAll,
     resumeAllAudio: resumeAll,
     isPaused: () => isPaused,
+    isSpeaking: () => isSpeakingState,
+    preloadPrompt: (key) => {
+      try {
+        if (typeof window !== 'undefined' && window.VoicePack && typeof window.VoicePack.preloadKey === 'function') {
+          window.VoicePack.preloadKey(key, config.mode);
+        }
+      } catch (_) {}
+    },
     splitIntoChunks,
     playSfx,
     playWolfHowl,

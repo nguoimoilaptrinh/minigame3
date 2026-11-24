@@ -928,6 +928,13 @@ window.AppUI = (() => {
         rolesDialog.close();
       });
     }
+    if (rolesDialog) {
+      rolesDialog.addEventListener('close', () => {
+        if (window.AudioEngine && typeof window.AudioEngine.stopSpeech === 'function') {
+          window.AudioEngine.stopSpeech();
+        }
+      });
+    }
 
     // QR Zoom Dialog
     const qrZoomDialog = document.getElementById('dialog-qr-zoom');
@@ -955,6 +962,37 @@ window.AppUI = (() => {
     if (spyLeaderboardBtn) spyLeaderboardBtn.addEventListener('click', openLeaderboard);
   }
 
+  let activeCodexSpeechKey = '';
+
+  function updateCodexSpeakButtons(activeKey) {
+    activeCodexSpeechKey = activeKey || '';
+    document.querySelectorAll('[data-codex-speak-key]').forEach((btn) => {
+      const isPlaying = Boolean(activeCodexSpeechKey && btn.dataset.codexSpeakKey === activeCodexSpeechKey);
+      btn.classList.toggle('is-speaking', isPlaying);
+      btn.setAttribute('aria-pressed', String(isPlaying));
+      btn.textContent = isPlaying ? '⏹️ Dừng đọc' : (btn.dataset.idleLabel || '🔊 Đọc hướng dẫn');
+    });
+  }
+
+  function speakCodexGuide(key, text) {
+    const audio = window.AudioEngine;
+    if (!audio || typeof audio.speak !== 'function' || !text) return;
+    if (activeCodexSpeechKey === key && typeof audio.isSpeaking === 'function' && audio.isSpeaking()) {
+      audio.stopSpeech?.();
+      updateCodexSpeakButtons('');
+      return;
+    }
+    audio.unlock?.();
+    audio.speak(text, {
+      preferBrowser: true,
+      allowLangFallback: true,
+      forceSpeak: true,
+      onStart: () => updateCodexSpeakButtons(key),
+      onEnd: () => updateCodexSpeakButtons(''),
+      onError: () => updateCodexSpeakButtons('')
+    });
+  }
+
   function renderRoleCodex() {
     const grid = document.getElementById('roles-codex-grid');
     if (!grid) return;
@@ -978,8 +1016,12 @@ window.AppUI = (() => {
         const expanded = card.classList.toggle('is-expanded');
         card.setAttribute('aria-expanded', String(expanded));
       };
-      card.addEventListener('click', toggle);
+      card.addEventListener('click', (event) => {
+        if (event.target && event.target.closest('button')) return;
+        toggle();
+      });
       card.addEventListener('keydown', (event) => {
+        if (event.target && event.target.closest('button')) return;
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           toggle();
@@ -993,17 +1035,106 @@ window.AppUI = (() => {
 
       const body = document.createElement('div');
       body.className = 'role-codex-body';
+
+      const headerRow = document.createElement('div');
+      headerRow.className = 'role-codex-head';
+      const titleWrap = document.createElement('div');
       const title = document.createElement('strong');
       title.textContent = `${role.icon} ${role.name}`;
       const team = document.createElement('span');
       team.className = 'team-tag';
       team.textContent = role.teamName;
+      titleWrap.append(title, team);
+
+      const speakKey = `role:${roleId}`;
+      const speakBtn = document.createElement('button');
+      speakBtn.type = 'button';
+      speakBtn.className = 'btn btn-ghost btn-small role-speak-btn';
+      speakBtn.dataset.codexSpeakKey = speakKey;
+      speakBtn.dataset.idleLabel = '🔊 Đọc';
+      speakBtn.setAttribute('aria-pressed', 'false');
+      speakBtn.setAttribute('aria-label', `Đọc hướng dẫn vai ${role.name}`);
+      speakBtn.textContent = '🔊 Đọc';
+      speakBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (!card.classList.contains('is-expanded')) {
+          card.classList.add('is-expanded');
+          card.setAttribute('aria-expanded', 'true');
+        }
+        const guideSpeech = role.speechGuide || `${role.name}. ${role.howToPlay || role.desc}`;
+        speakCodexGuide(speakKey, guideSpeech);
+      });
+      headerRow.append(titleWrap, speakBtn);
+
       const desc = document.createElement('p');
       desc.textContent = role.desc;
-      body.append(title, team, desc);
+
+      const guideDetails = document.createElement('div');
+      guideDetails.className = 'role-codex-guide';
+      const fields = [
+        { label: '🌙 Ban đêm', text: role.nightWake },
+        { label: '🎮 Cách chơi', text: role.howToPlay },
+        { label: '🏆 Điều kiện thắng', text: role.winRule },
+        { label: '💡 Lưu ý quan trọng', text: role.tip }
+      ];
+      fields.forEach((field) => {
+        if (!field.text) return;
+        const p = document.createElement('p');
+        p.className = 'role-guide-line';
+        const strong = document.createElement('strong');
+        strong.textContent = `${field.label}: `;
+        p.append(strong, document.createTextNode(field.text));
+        guideDetails.appendChild(p);
+      });
+
+      body.append(headerRow, desc, guideDetails);
       card.append(art, body);
       grid.appendChild(card);
     });
+
+    const parent = grid.parentElement;
+    if (parent) {
+      let faqBox = document.getElementById('roles-faq-section');
+      if (!faqBox) {
+        faqBox = document.createElement('section');
+        faqBox.id = 'roles-faq-section';
+        faqBox.className = 'roles-faq-section';
+        parent.appendChild(faqBox);
+      }
+      faqBox.innerHTML = '';
+      const faqs = window.GameData?.ROLE_FAQ_TOPICS || [];
+      if (faqs.length > 0) {
+        const heading = document.createElement('h4');
+        heading.className = 'roles-faq-title';
+        heading.textContent = '❓ Giải đáp luật đặc biệt (Bấm 🔊 để nghe đọc)';
+        faqBox.appendChild(heading);
+
+        faqs.forEach((topic) => {
+          const item = document.createElement('div');
+          item.className = 'roles-faq-item';
+          const top = document.createElement('div');
+          top.className = 'roles-faq-head';
+          const q = document.createElement('strong');
+          q.textContent = `${topic.icon || '❓'} ${topic.title}`;
+          const speakKey = `faq:${topic.id}`;
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'btn btn-ghost btn-small role-speak-btn';
+          btn.dataset.codexSpeakKey = speakKey;
+          btn.dataset.idleLabel = '🔊 Nghe';
+          btn.setAttribute('aria-pressed', 'false');
+          btn.textContent = '🔊 Nghe';
+          btn.addEventListener('click', () => speakCodexGuide(speakKey, topic.speechText || topic.answer));
+          top.append(q, btn);
+
+          const ans = document.createElement('p');
+          ans.textContent = topic.answer;
+          item.append(top, ans);
+          faqBox.appendChild(item);
+        });
+      }
+    }
+    updateCodexSpeakButtons(activeCodexSpeechKey);
   }
 
   let wakeLock = null;

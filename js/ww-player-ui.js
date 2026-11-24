@@ -424,7 +424,11 @@
           teamBadge.dataset.team = role.team || '';
         }
         const descEl = document.getElementById('ww-pl-role-desc');
-        if (descEl) descEl.textContent = role.desc || '';
+        if (descEl) {
+          const baseDesc = role.desc || '';
+          const tipLine = role.howToPlay && !baseDesc.includes(role.howToPlay) ? `\n💡 ${role.howToPlay}` : '';
+          descEl.textContent = `${baseDesc}${tipLine}`;
+        }
       }
 
       const matesEl = document.getElementById('ww-pl-role-teammates');
@@ -439,7 +443,8 @@
             alive: aliveOfPublic(st, m.id, m.alive)
           })),
           lover: li ? { ...li, alive: aliveOfPublic(st, li.id, li.alive) } : null,
-          converted: Boolean(clientSecret.converted)
+          converted: Boolean(clientSecret.converted),
+          convertedReason: clientSecret.convertedReason || ''
         });
       }
     }
@@ -777,11 +782,14 @@
       : null;
     const btn = bar && typeof bar.querySelector === 'function' ? bar.querySelector('button, .btn') : null;
     if (bar && btn) {
+      bar._onConfirm = typeof opts.onConfirm === 'function' ? opts.onConfirm : null;
       if (btn.textContent !== opts.label) btn.textContent = opts.label;
       btn.disabled = !opts.enabled;
-      const hint = bar.querySelector('.hint, small');
-      if (hint && opts.hint) {
-        if (hint.textContent !== opts.hint) hint.textContent = opts.hint;
+      btn.classList.toggle('btn-attention', Boolean(opts.enabled));
+      btn.classList.toggle('wwv-attention', Boolean(opts.enabled));
+      const hint = bar.querySelector('.wwv-confirm-hint, .hint, small');
+      if (hint) {
+        if (opts.hint && hint.textContent !== opts.hint) hint.textContent = opts.hint;
         hint.hidden = Boolean(opts.enabled);
       }
       return;

@@ -1177,10 +1177,130 @@ input[type="range"] {
   background: rgba(139, 92, 246, 0.05);
 }
 
+.role-config-row.is-guide-selected {
+  border-color: rgba(34, 211, 238, 0.55);
+  background: rgba(34, 211, 238, 0.08);
+}
+
 .role-config-info {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.role-config-info.is-clickable {
+  cursor: pointer;
+}
+
+.role-config-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.role-guide-speak-btn {
+  min-height: 34px;
+  min-width: 36px;
+  padding: 0 0.45rem;
+  font-size: 0.92rem;
+}
+
+.role-guide-speak-btn.is-speaking,
+.ww-host-role-guide-box .is-speaking {
+  border-color: rgba(34, 211, 238, 0.65);
+  background: rgba(34, 211, 238, 0.18);
+  color: #67e8f9;
+}
+
+.ww-host-role-guide-box {
+  margin-top: 0.75rem;
+  padding: 0.82rem 0.9rem;
+  border-radius: 13px;
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  background: rgba(15, 23, 42, 0.65);
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.ww-guide-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.ww-guide-title strong {
+  display: block;
+  font-size: 0.95rem;
+  color: #f8fafc;
+}
+
+.ww-guide-title small {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.ww-guide-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.ww-guide-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.ww-guide-line {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.48;
+  color: var(--text-soft);
+}
+
+.ww-guide-line strong {
+  color: #e2e8f0;
+}
+
+.ww-guide-faq-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.ww-guide-faq-item {
+  padding: 0.55rem 0.65rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.ww-guide-faq-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.28rem;
+}
+
+.ww-guide-faq-head strong {
+  font-size: 0.82rem;
+  color: #f8fafc;
+}
+
+.ww-guide-faq-item p {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--text-muted);
 }
 
 .role-config-info > span {

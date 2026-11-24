@@ -59,6 +59,9 @@
   let hostTickTimer = null;
   let lastHostSceneKey = '';
   let activePresetId = null;
+  let activeHostGuideMode = 'role';
+  let selectedGuideRoleId = 'werewolf';
+  let activeHostSpeechKey = '';
 
   // ==================== SAFE GLOBAL ACCESSORS ====================
   function E() {
@@ -634,6 +637,153 @@
   }
 
   // ==================== LOBBY RENDERING ====================
+  function updateHostGuideSpeakButtons(activeKey) {
+    activeHostSpeechKey = activeKey || '';
+    if (typeof document === 'undefined') return;
+    document.querySelectorAll('[data-host-speak-key]').forEach((btn) => {
+      const playing = Boolean(activeHostSpeechKey && btn.dataset.hostSpeakKey === activeHostSpeechKey);
+      btn.classList.toggle('is-speaking', playing);
+      btn.setAttribute('aria-pressed', String(playing));
+      btn.textContent = playing
+        ? (btn.dataset.activeLabel || '⏹️ Dừng đọc')
+        : (btn.dataset.idleLabel || '🔊 Đọc');
+    });
+  }
+
+  function speakHostGuide(key, text) {
+    const audio = Audio();
+    if (!audio || typeof audio.speak !== 'function' || !text) return;
+    if (activeHostSpeechKey === key && typeof audio.isSpeaking === 'function' && audio.isSpeaking()) {
+      audio.stopSpeech?.();
+      updateHostGuideSpeakButtons('');
+      return;
+    }
+    audio.unlock?.();
+    audio.speak(text, {
+      preferBrowser: true,
+      allowLangFallback: true,
+      forceSpeak: true,
+      onStart: () => updateHostGuideSpeakButtons(key),
+      onEnd: () => updateHostGuideSpeakButtons(''),
+      onError: () => updateHostGuideSpeakButtons('')
+    });
+  }
+
+  function ensureHostRoleGuideBox(configEl) {
+    if (typeof document === 'undefined' || !configEl || !configEl.parentNode) return null;
+    let box = elById('ww-host-role-guide-box');
+    if (!box) {
+      box = document.createElement('section');
+      box.id = 'ww-host-role-guide-box';
+      box.className = 'ww-host-role-guide-box';
+      if (configEl.nextSibling) {
+        configEl.parentNode.insertBefore(box, configEl.nextSibling);
+      } else {
+        configEl.parentNode.appendChild(box);
+      }
+    }
+    return box;
+  }
+
+  function renderHostRoleGuideBox(configEl) {
+    const box = ensureHostRoleGuideBox(configEl);
+    if (!box) return;
+    const gd = GD();
+    const rolesMap = gd.WEREWOLF_ROLES || {};
+    const faqs = Array.isArray(gd.ROLE_FAQ_TOPICS) ? gd.ROLE_FAQ_TOPICS : [];
+    const role = rolesMap[selectedGuideRoleId] || rolesMap.werewolf || null;
+
+    box.innerHTML = '';
+
+    const topBar = document.createElement('div');
+    topBar.className = 'ww-guide-header';
+
+    const title = document.createElement('div');
+    title.className = 'ww-guide-title';
+    title.innerHTML = activeHostGuideMode === 'faq'
+      ? '<strong>❓ Giải đáp luật chơi dễ nhầm</strong><small>Bấm 🔊 để máy Quản Trò đọc to cho cả bàn nghe</small>'
+      : `<strong>${escapeHtml(role?.icon || '📜')} Hướng dẫn: ${escapeHtml(role?.name || 'Vai trò')}</strong><small>${escapeHtml(role?.teamName || '')} — Bấm tên vai trò hoặc 🔊 ở trên để xem &amp; nghe</small>`;
+
+    const actions = document.createElement('div');
+    actions.className = 'ww-guide-actions';
+
+    if (activeHostGuideMode !== 'faq' && role) {
+      const roleSpeechKey = `host-role:${role.id}`;
+      const readBtn = document.createElement('button');
+      readBtn.type = 'button';
+      readBtn.className = 'btn btn-primary btn-sm';
+      readBtn.dataset.hostSpeakKey = roleSpeechKey;
+      readBtn.dataset.idleLabel = '🔊 Đọc hướng dẫn';
+      readBtn.textContent = '🔊 Đọc hướng dẫn';
+      readBtn.onclick = () => {
+        speakHostGuide(roleSpeechKey, role.speechGuide || `${role.name}. ${role.howToPlay || role.desc}`);
+      };
+      actions.appendChild(readBtn);
+    }
+
+    const modeBtn = document.createElement('button');
+    modeBtn.type = 'button';
+    modeBtn.className = `btn btn-sm ${activeHostGuideMode === 'faq' ? 'btn-secondary' : 'btn-ghost'}`;
+    modeBtn.textContent = activeHostGuideMode === 'faq' ? '📜 Xem vai đang chọn' : '❓ Luật Cặp Đôi & Hay gặp';
+    modeBtn.onclick = () => {
+      activeHostGuideMode = activeHostGuideMode === 'faq' ? 'role' : 'faq';
+      renderHostRoleGuideBox(configEl);
+    };
+    actions.appendChild(modeBtn);
+
+    topBar.append(title, actions);
+    box.appendChild(topBar);
+
+    if (activeHostGuideMode === 'faq') {
+      const faqList = document.createElement('div');
+      faqList.className = 'ww-guide-faq-list';
+      faqs.forEach((topic) => {
+        const item = document.createElement('div');
+        item.className = 'ww-guide-faq-item';
+        const head = document.createElement('div');
+        head.className = 'ww-guide-faq-head';
+        const q = document.createElement('strong');
+        q.textContent = `${topic.icon || '❓'} ${topic.title}`;
+        const key = `host-faq:${topic.id}`;
+        const speakBtn = document.createElement('button');
+        speakBtn.type = 'button';
+        speakBtn.className = 'btn btn-ghost btn-sm';
+        speakBtn.dataset.hostSpeakKey = key;
+        speakBtn.dataset.idleLabel = '🔊 Nghe';
+        speakBtn.textContent = '🔊 Nghe';
+        speakBtn.onclick = () => speakHostGuide(key, topic.speechText || topic.answer);
+        head.append(q, speakBtn);
+        const ans = document.createElement('p');
+        ans.textContent = topic.answer;
+        item.append(head, ans);
+        faqList.appendChild(item);
+      });
+      box.appendChild(faqList);
+    } else if (role) {
+      const content = document.createElement('div');
+      content.className = 'ww-guide-content';
+      const rows = [
+        { label: '📌 Tóm tắt', text: role.desc },
+        { label: '🌙 Ban đêm', text: role.nightWake },
+        { label: '🎮 Cách chơi', text: role.howToPlay },
+        { label: '🏆 Điều kiện thắng', text: role.winRule },
+        { label: '💡 Lưu ý quan trọng', text: role.tip }
+      ];
+      rows.forEach((entry) => {
+        if (!entry.text) return;
+        const p = document.createElement('p');
+        p.className = 'ww-guide-line';
+        const s = document.createElement('strong');
+        s.textContent = `${entry.label}: `;
+        p.append(s, document.createTextNode(entry.text));
+        content.appendChild(p);
+      });
+      box.appendChild(content);
+    }
+
+    updateHostGuideSpeakButtons(activeHostSpeechKey);
+  }
+
   function renderPresetBar(configEl) {
     const bar = ensurePresetBar(configEl);
     if (!bar) return;
@@ -996,9 +1146,29 @@
 
         const row = document.createElement('div');
         row.className = 'role-config-row';
+        if (activeHostGuideMode === 'role' && selectedGuideRoleId === roleId) {
+          row.classList.add('is-guide-selected');
+        }
 
         const info = document.createElement('div');
-        info.className = 'role-config-info';
+        info.className = 'role-config-info is-clickable';
+        info.setAttribute('role', 'button');
+        info.tabIndex = 0;
+        info.title = `Xem hướng dẫn vai ${role.name}`;
+        const selectGuideRole = () => {
+          activeHostGuideMode = 'role';
+          selectedGuideRoleId = roleId;
+          configEl.querySelectorAll('.role-config-row').forEach((r) => r.classList.remove('is-guide-selected'));
+          row.classList.add('is-guide-selected');
+          renderHostRoleGuideBox(configEl);
+        };
+        info.addEventListener('click', selectGuideRole);
+        info.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            selectGuideRole();
+          }
+        });
         const icon = document.createElement('span');
         icon.textContent = role.icon;
         icon.setAttribute('aria-hidden', 'true');
@@ -1010,6 +1180,24 @@
           : '';
         txt.innerHTML = `<strong>${escapeHtml(role.name)}${newBadge}</strong><small>${escapeHtml(role.teamName)}</small>`;
         info.append(icon, txt);
+
+        const controls = document.createElement('div');
+        controls.className = 'role-config-controls';
+
+        const guideSpeakBtn = document.createElement('button');
+        guideSpeakBtn.type = 'button';
+        guideSpeakBtn.className = 'btn btn-ghost btn-sm role-guide-speak-btn';
+        guideSpeakBtn.dataset.hostSpeakKey = `host-role:${roleId}`;
+        guideSpeakBtn.dataset.idleLabel = '🔊';
+        guideSpeakBtn.dataset.activeLabel = '⏹️';
+        guideSpeakBtn.textContent = '🔊';
+        guideSpeakBtn.title = `Nghe giải thích vai ${role.name}`;
+        guideSpeakBtn.setAttribute('aria-label', `Nghe hướng dẫn vai ${role.name}`);
+        guideSpeakBtn.addEventListener('click', (event) => {
+          event.stopPropagation();
+          selectGuideRole();
+          speakHostGuide(`host-role:${roleId}`, role.speechGuide || `${role.name}. ${role.howToPlay || role.desc}`);
+        });
 
         const stepper = document.createElement('div');
         stepper.className = 'stepper';
@@ -1035,9 +1223,11 @@
         });
 
         stepper.append(minus, num, plus);
-        row.append(info, stepper);
+        controls.append(guideSpeakBtn, stepper);
+        row.append(info, controls);
         configEl.appendChild(row);
       });
+      renderHostRoleGuideBox(configEl);
     } else if (typeof c.getRoleCountTotal === 'function') {
       totalRoles = c.getRoleCountTotal(rolesCfg);
     }

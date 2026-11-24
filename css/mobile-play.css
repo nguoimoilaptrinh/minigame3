@@ -1033,6 +1033,96 @@ dialog > h2 {
   font-size: 0.78rem;
 }
 
+.role-codex-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.role-speak-btn {
+  flex-shrink: 0;
+  min-height: 28px;
+  padding: 0.18rem 0.55rem;
+  font-size: 0.72rem;
+}
+
+.role-speak-btn.is-speaking {
+  border-color: rgba(34, 211, 238, 0.65);
+  background: rgba(34, 211, 238, 0.18);
+  color: #67e8f9;
+}
+
+.role-codex-guide {
+  display: none;
+  margin-top: 0.45rem;
+  padding-top: 0.45rem;
+  border-top: 1px dashed rgba(148, 163, 184, 0.22);
+  flex-direction: column;
+  gap: 0.32rem;
+}
+
+.role-codex-card.is-expanded .role-codex-guide {
+  display: flex;
+}
+
+.role-guide-line {
+  margin: 0;
+  font-size: 0.76rem;
+  line-height: 1.48;
+  color: var(--text-soft);
+}
+
+.role-guide-line strong {
+  display: inline;
+  font-size: 0.76rem;
+  color: #f8fafc;
+}
+
+.roles-faq-section {
+  margin-top: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.roles-faq-title {
+  margin: 0;
+  font-size: 0.92rem;
+  color: #f8fafc;
+}
+
+.roles-faq-item {
+  padding: 0.65rem 0.75rem;
+  border-radius: 11px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.roles-faq-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.roles-faq-head strong {
+  font-size: 0.82rem;
+  color: #f8fafc;
+}
+
+.roles-faq-item p {
+  margin: 0;
+  font-size: 0.76rem;
+  line-height: 1.48;
+  color: var(--text-muted);
+}
+
+#ww-pl-role-desc {
+  white-space: pre-line;
+}
+
 .codex-note {
   padding: 0.75rem 0.85rem;
   border-radius: 11px;

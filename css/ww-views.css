@@ -221,7 +221,9 @@
   animation: wwvGlow 1.4s ease-in-out infinite;
 }
 .wwv-tile-name { font-size: 1.15rem; font-weight: 800; max-width: 100%; overflow-wrap: anywhere; line-height: 1.2; }
-.wwv-tag-bot {
+.wwv-tag-bot,
+.wwv-tag-sheriff,
+.wwv-tag-silenced {
   margin-left: 6px;
   padding: 0 6px;
   border-radius: 6px;
@@ -230,6 +232,16 @@
   color: var(--accent-soft);
   border: 1px solid rgba(103, 232, 249, 0.4);
   vertical-align: middle;
+}
+.wwv-tag-sheriff {
+  color: #fde68a;
+  border-color: rgba(251, 191, 36, 0.55);
+  background: rgba(251, 191, 36, 0.12);
+}
+.wwv-tag-silenced {
+  color: #c7d2fe;
+  border-color: rgba(129, 140, 248, 0.55);
+  background: rgba(99, 102, 241, 0.16);
 }
 .wwv-tile-status { font-size: 1rem; color: var(--text-soft); font-weight: 600; }
 .wwv-status-off { color: #fca5a5; }

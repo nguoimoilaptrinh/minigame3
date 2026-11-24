@@ -890,6 +890,8 @@
         roleId: player.roleId,
         startRoleId: player.startRoleId || player.roleId,
         converted: Boolean(player.startRoleId && player.startRoleId !== player.roleId),
+        convertedReason:
+          player.convertedReason || (player.startRoleId === 'cursed_villager' ? 'cursed' : player.startRoleId && player.startRoleId !== player.roleId ? 'alpha' : ''),
         teammates,
         loverInfo,
         ...(extra || {})
@@ -923,7 +925,9 @@
 
   function sendWitchInfoTo(witchPlayer) {
     if (!session || !witchPlayer || witchPlayer.isDemo) return;
-    const victimId = state.witchPotions.save ? state.nightActions.wolfTarget : null;
+    // Nếu Sói Đầu Đàn đã nguyền nạn nhân đêm nay, nạn nhân biến thành Sói chứ không chết -> Phù Thủy không cần cứu
+    const victimId =
+      state.witchPotions.save && !state.nightActions.alphaConvert ? state.nightActions.wolfTarget : null;
     const victim = victimId ? byId(victimId) : null;
     session.send(
       'WW_WITCH_INFO',
@@ -1082,8 +1086,16 @@
   }
 
   // ==================== BOT SPEECH ====================
-  function setBotSpeech(text, onDone) {
+  function setBotSpeech(text, onDoneOrOpts, maybeOpts) {
     clearSpeechGuard();
+    const onDone = typeof onDoneOrOpts === 'function' ? onDoneOrOpts : null;
+    const speechOpts =
+      typeof onDoneOrOpts === 'object' && onDoneOrOpts !== null
+        ? onDoneOrOpts
+        : maybeOpts && typeof maybeOpts === 'object'
+        ? maybeOpts
+        : {};
+
     if (speechPrefix) {
       text = speechPrefix + text;
       speechPrefix = '';
@@ -1099,6 +1111,9 @@
     };
 
     state.botText = text;
+    state.botPromptKey = speechOpts.promptKey || null;
+    state.botFollowUpKeys = Array.isArray(speechOpts.followUpKeys) ? speechOpts.followUpKeys : [];
+    state.botDramaticReveal = Boolean(speechOpts.dramaticReveal);
     hooks.renderHost?.();
     syncStateToClients();
 
@@ -1112,7 +1127,12 @@
 
     try {
       if (_win.AudioEngine && typeof _win.AudioEngine.speak === 'function') {
-        _win.AudioEngine.speak(text, finish);
+        _win.AudioEngine.speak(text, {
+          promptKey: state.botPromptKey,
+          followUpKeys: state.botFollowUpKeys,
+          dramaticReveal: state.botDramaticReveal,
+          onEnd: finish
+        });
       } else {
         setTimeout(finish, 30);
       }
@@ -1125,7 +1145,12 @@
     if (!state || !state.botText) return;
     try {
       _win.AudioEngine?.unlock?.();
-      _win.AudioEngine?.speak?.(state.botText);
+      _win.AudioEngine?.speak?.(state.botText, {
+        promptKey: state.botPromptKey || undefined,
+        followUpKeys: Array.isArray(state.botFollowUpKeys) ? state.botFollowUpKeys : undefined,
+        dramaticReveal: Boolean(state.botDramaticReveal),
+        forceSpeak: true
+      });
     } catch (_) {}
   }
 
@@ -1679,7 +1704,7 @@
         if (!cur || cur.endsAt !== endsAt || state.phase !== 'DAY' || !state.flow || state.flow.key !== 'day') return;
         cur.warned = true;
         persistHost();
-        setBotSpeech('Chỉ còn 30 giây nữa là hết giờ bỏ phiếu! Ai chưa bỏ phiếu thì nhanh tay lên!');
+        setBotSpeech('Chỉ còn 30 giây nữa là hết giờ bỏ phiếu! Ai chưa bỏ phiếu thì nhanh tay lên!', { promptKey: 'vote_30s' });
       });
     }
   }
@@ -1724,7 +1749,8 @@
         'vote_tie_revote',
         { names: joinNames(names) },
         `Hòa phiếu giữa ${joinNames(names)}! Mọi người thảo luận thêm và bỏ phiếu lại — lần này hòa nữa thì không ai bị treo cổ.`
-      )
+      ),
+      { promptKey: 'vote_tie_revote' }
     );
     armDayDeadline();
   }
@@ -1775,19 +1801,23 @@
     let targetId = null;
     let text;
 
+    let lockPromptKey = 'vote_all_done';
     if (tally.isTie && !state.revoteUsed && settingsOf().tieRule === 'revote') {
       startRevote(tally);
       return;
     }
     if (tally.isTie) {
       kind = 'skip';
+      lockPromptKey = 'vote_tie_none';
       text = `Hòa phiếu${state.revoteUsed ? ' lần nữa' : ''}! Hôm nay không ai bị treo cổ. Bot sẽ chuyển sang đêm sau 8 giây — ai muốn đổi phiếu thì đổi ngay!`;
     } else if (tally.leaderId === '__skip__') {
       kind = 'skip';
+      lockPromptKey = 'vote_all_skip';
       text = 'Đa số bỏ phiếu trắng! Hôm nay không ai bị treo cổ. Bot sẽ chuyển sang đêm sau 8 giây — ai muốn đổi phiếu thì đổi ngay!';
     } else {
       kind = 'lynch';
       targetId = tally.leaderId;
+      lockPromptKey = 'vote_all_done';
       const leader = byId(targetId);
       text = `Tất cả đã bỏ phiếu! ${leader ? leader.name : ''} đang dẫn đầu với ${tally.topVotes} phiếu. Bot sẽ chốt sau 8 giây — ai muốn đổi phiếu thì đổi ngay!`;
     }
@@ -1799,7 +1829,7 @@
       try {
         _win.AudioEngine?.playVoteGavel?.();
       } catch (_) {}
-      setBotSpeech(text);
+      setBotSpeech(text, { promptKey: lockPromptKey });
     }
   }
 
@@ -1931,7 +1961,8 @@
             beginNextNight();
           }
         }, 2400);
-      }
+      },
+      { promptKey: 'game_start' }
     );
   }
 
@@ -1985,9 +2016,13 @@
       } catch (_) {}
     }
 
-    setBotSpeech(introText, () => {
-      armStepTimer(() => advanceNightStep(), 1000);
-    });
+    setBotSpeech(
+      introText,
+      () => {
+        armStepTimer(() => advanceNightStep(), 1000);
+      },
+      { promptKey: 'night_start' }
+    );
   }
 
   function getActiveNightOrder(cfg, nightNum) {
@@ -2076,10 +2111,19 @@
               ? 'avenger'
               : 'hunter'
             : state.nightStep;
+        const remindKey =
+          step === 'hunter'
+            ? 'hunter_trigger'
+            : step === 'avenger'
+            ? 'avenger_trigger'
+            : step
+            ? `call_${step}`
+            : undefined;
         setBotSpeech(
           step === 'werewolf'
             ? 'Ma Sói ơi, hãy mở mắt dậy và chọn con mồi đêm nay!'
-            : `${STEP_CALL_NAME[step] || 'Bạn'} ơi, hãy thao tác trên điện thoại của mình nhé!`
+            : `${STEP_CALL_NAME[step] || 'Bạn'} ơi, hãy thao tác trên điện thoại của mình nhé!`,
+          { promptKey: remindKey }
         );
       }
       cur.level += 1;
@@ -2151,7 +2195,7 @@
           if (stepResolved || state.nightStep !== 'werewolf' || cur.wolfNudged || cur.wolfLock) return;
           cur.wolfNudged = true;
           persistHost();
-          setBotSpeech('Bầy Sói ơi, hãy thống nhất chọn một con mồi nào!');
+          setBotSpeech('Bầy Sói ơi, hãy thống nhất chọn một con mồi nào!', { promptKey: 'wolf_nudge' });
         });
       }
       armTimer('wolfMajority', Math.max(400, na.wolfFirstPickAt + WOLF_MAJORITY_MS - now), () => {
@@ -2210,16 +2254,20 @@
     else if (step === 'serial_killer') runSerialKillerStep();
   }
 
-  function closeNightStep(text) {
+  function closeNightStep(text, promptKey) {
     setFlow('night_step_done');
     const startedAt = (state.stepWatch && state.stepWatch.startedAt) || 0;
     const wait = skipStepFloorOnce ? 0 : Math.max(0, startedAt + paceCfg().floorMs - Date.now());
     skipStepFloorOnce = false;
     const speakClose = () => {
       if (!state || state.phase !== 'NIGHT' || !state.flow || state.flow.key !== 'night_step_done') return;
-      setBotSpeech(text, () => {
-        armStepTimer(() => advanceNightStep(), 900 + Math.round(Math.random() * 700));
-      });
+      setBotSpeech(
+        text,
+        () => {
+          armStepTimer(() => advanceNightStep(), 900 + Math.round(Math.random() * 700));
+        },
+        { promptKey }
+      );
     };
     if (wait > 0) armStepTimer(speakClose, wait);
     else speakClose();
@@ -2232,19 +2280,23 @@
       st.storyTheme === 'classic' && !st.dynamicEvents
         ? 'Thần Tình Yêu ơi, hãy mở mắt dậy và chọn 2 người để ghép thành Cặp Đôi Tình Nhân!'
         : narrate('call_cupid', {}, 'Thần Tình Yêu ơi, hãy mở mắt dậy và chọn 2 người để ghép thành Cặp Đôi Tình Nhân!');
-    setBotSpeech(callTxt, () => {
-      if (!aliveCupid) {
-        armStepTimer(() => finishCupidStep([]), fakeActDelay('cupid'));
-      } else if (aliveCupid.isDemo) {
-        const pool = [...state.players].filter((p) => p.alive);
-        for (let i = pool.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [pool[i], pool[j]] = [pool[j], pool[i]];
+    setBotSpeech(
+      callTxt,
+      () => {
+        if (!aliveCupid) {
+          armStepTimer(() => finishCupidStep([]), fakeActDelay('cupid'));
+        } else if (aliveCupid.isDemo) {
+          const pool = [...state.players].filter((p) => p.alive);
+          for (let i = pool.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [pool[i], pool[j]] = [pool[j], pool[i]];
+          }
+          const pair = pool.length >= 2 ? [pool[0].id, pool[1].id] : [];
+          armStepTimer(() => finishCupidStep(pair), fakeActDelay('cupid'));
         }
-        const pair = pool.length >= 2 ? [pool[0].id, pool[1].id] : [];
-        armStepTimer(() => finishCupidStep(pair), fakeActDelay('cupid'));
-      }
-    });
+      },
+      { promptKey: 'call_cupid' }
+    );
   }
 
   function finishCupidStep(targetIds) {
@@ -2270,7 +2322,7 @@
     } else {
       addLog('Thần Tình Yêu không ghép đôi ai.', { icon: '💘', secret: true });
     }
-    closeNightStep(narrate('sleep_cupid', {}, 'Thần Tình Yêu đã se duyên xong. Xin mời Thần Tình Yêu nhắm mắt lại.'));
+    closeNightStep(narrate('sleep_cupid', {}, 'Thần Tình Yêu đã se duyên xong. Xin mời Thần Tình Yêu nhắm mắt lại.'), 'sleep_cupid');
   }
 
   function runGuardStep() {
@@ -2280,15 +2332,19 @@
       st.storyTheme === 'classic' && !st.dynamicEvents
         ? 'Bảo Vệ ơi, hãy mở mắt dậy và chọn một người để bảo vệ đêm nay.'
         : narrate('call_guard', {}, 'Bảo Vệ ơi, hãy mở mắt dậy và chọn một người để bảo vệ đêm nay.');
-    setBotSpeech(callTxt, () => {
-      if (!aliveGuard) {
-        armStepTimer(() => finishGuardStep(null), fakeActDelay('guard'));
-      } else if (aliveGuard.isDemo) {
-        const candidates = state.players.filter((p) => p.alive && p.id !== state.lastGuardedId);
-        const pick = candidates[Math.floor(Math.random() * candidates.length)];
-        armStepTimer(() => finishGuardStep(pick ? pick.id : null), fakeActDelay('guard'));
-      }
-    });
+    setBotSpeech(
+      callTxt,
+      () => {
+        if (!aliveGuard) {
+          armStepTimer(() => finishGuardStep(null), fakeActDelay('guard'));
+        } else if (aliveGuard.isDemo) {
+          const candidates = state.players.filter((p) => p.alive && p.id !== state.lastGuardedId);
+          const pick = candidates[Math.floor(Math.random() * candidates.length)];
+          armStepTimer(() => finishGuardStep(pick ? pick.id : null), fakeActDelay('guard'));
+        }
+      },
+      { promptKey: 'call_guard' }
+    );
   }
 
   function finishGuardStep(targetId) {
@@ -2300,7 +2356,7 @@
     syncPlayerFlags();
     const t = targetId ? byId(targetId) : null;
     addLog(t ? `Bảo Vệ chọn bảo vệ ${describe(t)}.` : 'Bảo Vệ không bảo vệ ai.', { icon: '🛡️', secret: true });
-    closeNightStep(narrate('sleep_guard', {}, 'Bảo Vệ đã chọn xong. Xin mời Bảo Vệ nhắm mắt lại.'));
+    closeNightStep(narrate('sleep_guard', {}, 'Bảo Vệ đã chọn xong. Xin mời Bảo Vệ nhắm mắt lại.'), 'sleep_guard');
   }
 
   function runWerewolfStep() {
@@ -2313,15 +2369,19 @@
       st.storyTheme === 'classic' && !st.dynamicEvents
         ? 'Ma Sói ơi, hãy mở mắt dậy và chọn con mồi đêm nay!'
         : narrate('call_werewolf', {}, 'Ma Sói ơi, hãy mở mắt dậy và chọn con mồi đêm nay!');
-    setBotSpeech(callTxt, () => {
-      if (wolves.length === 0) {
-        armStepTimer(() => finishWerewolfStep(null), fakeActDelay('werewolf'));
-      } else if (wolves.every((w) => w.isDemo)) {
-        const prey = state.players.filter((p) => p.alive && !isWolfRole(p.roleId));
-        const pick = prey[Math.floor(Math.random() * prey.length)];
-        armStepTimer(() => finishWerewolfStep(pick ? pick.id : null), fakeActDelay('werewolf'));
-      }
-    });
+    setBotSpeech(
+      callTxt,
+      () => {
+        if (wolves.length === 0) {
+          armStepTimer(() => finishWerewolfStep(null), fakeActDelay('werewolf'));
+        } else if (wolves.every((w) => w.isDemo)) {
+          const prey = state.players.filter((p) => p.alive && !isWolfRole(p.roleId));
+          const pick = prey[Math.floor(Math.random() * prey.length)];
+          armStepTimer(() => finishWerewolfStep(pick ? pick.id : null), fakeActDelay('werewolf'));
+        }
+      },
+      { promptKey: 'call_werewolf' }
+    );
   }
 
   function pickMajorityWolfTarget(lastTargetId) {
@@ -2348,7 +2408,7 @@
         : 'Bầy Sói không chọn được con mồi nào.',
       { icon: '🐺', secret: true }
     );
-    closeNightStep(narrate('sleep_werewolf', {}, 'Ma Sói đã chọn xong con mồi. Xin mời Ma Sói nhắm mắt lại.'));
+    closeNightStep(narrate('sleep_werewolf', {}, 'Ma Sói đã chọn xong con mồi. Xin mời Ma Sói nhắm mắt lại.'), 'sleep_werewolf');
   }
 
   // [H3-Bug] Sói Đầu Đàn luôn được gọi nếu có trong rolesConfig và giữ thời lượng cố định khi không thể nguyền
@@ -2395,13 +2455,17 @@
             'Sói Đầu Đàn ơi, bạn có muốn dùng quyền Nguyền biến nạn nhân đêm nay thành Ma Sói không?'
           );
 
-    setBotSpeech(callTxt, () => {
-      if (!canAct) {
-        armStepTimer(() => finishAlphaWolfStep(false), fakeActDelay('alpha_wolf'));
-      } else if (aliveAlphas.every((p) => p.isDemo)) {
-        armStepTimer(() => finishAlphaWolfStep(false), fakeActDelay('alpha_wolf'));
-      }
-    });
+    setBotSpeech(
+      callTxt,
+      () => {
+        if (!canAct) {
+          armStepTimer(() => finishAlphaWolfStep(false), fakeActDelay('alpha_wolf'));
+        } else if (aliveAlphas.every((p) => p.isDemo)) {
+          armStepTimer(() => finishAlphaWolfStep(false), fakeActDelay('alpha_wolf'));
+        }
+      },
+      { promptKey: 'call_alpha_wolf' }
+    );
   }
 
   function finishAlphaWolfStep(convert) {
@@ -2415,7 +2479,7 @@
     } else {
       addLog('Sói Đầu Đàn không dùng quyền Nguyền đêm nay.', { icon: '🩸', secret: true });
     }
-    closeNightStep(narrate('sleep_alpha_wolf', {}, 'Sói Đầu Đàn đã quyết định xong. Xin mời Sói Đầu Đàn nhắm mắt lại.'));
+    closeNightStep(narrate('sleep_alpha_wolf', {}, 'Sói Đầu Đàn đã quyết định xong. Xin mời Sói Đầu Đàn nhắm mắt lại.'), 'sleep_alpha_wolf');
   }
 
   function runSeerStep() {
@@ -2427,18 +2491,22 @@
       st.storyTheme === 'classic' && !st.dynamicEvents
         ? 'Tiên Tri ơi, hãy mở mắt dậy và chọn một người để soi thân phận.'
         : narrate('call_seer', {}, 'Tiên Tri ơi, hãy mở mắt dậy và chọn một người để soi thân phận.');
-    setBotSpeech(callTxt, () => {
-      if (!aliveSeer || aliveSeer.isDemo) {
-        armStepTimer(() => finishSeerStep(), fakeActDelay('seer'));
-      }
-    });
+    setBotSpeech(
+      callTxt,
+      () => {
+        if (!aliveSeer || aliveSeer.isDemo) {
+          armStepTimer(() => finishSeerStep(), fakeActDelay('seer'));
+        }
+      },
+      { promptKey: 'call_seer' }
+    );
   }
 
   function finishSeerStep() {
     if (stepResolved || !state || state.phase !== 'NIGHT' || state.nightStep !== 'seer') return;
     stepResolved = true;
     clearHostTimers();
-    closeNightStep(narrate('sleep_seer', {}, 'Tiên Tri đã soi xong. Xin mời Tiên Tri nhắm mắt lại.'));
+    closeNightStep(narrate('sleep_seer', {}, 'Tiên Tri đã soi xong. Xin mời Tiên Tri nhắm mắt lại.'), 'sleep_seer');
   }
 
   // [G3] Thám Tử
@@ -2457,18 +2525,22 @@
             {},
             'Thám Tử ơi, hãy mở mắt dậy và chọn hai người để kiểm tra xem họ cùng phe hay khác phe.'
           );
-    setBotSpeech(callTxt, () => {
-      if (!aliveDetective || aliveDetective.isDemo) {
-        armStepTimer(() => finishDetectiveStep(), fakeActDelay('detective'));
-      }
-    });
+    setBotSpeech(
+      callTxt,
+      () => {
+        if (!aliveDetective || aliveDetective.isDemo) {
+          armStepTimer(() => finishDetectiveStep(), fakeActDelay('detective'));
+        }
+      },
+      { promptKey: 'call_detective' }
+    );
   }
 
   function finishDetectiveStep() {
     if (stepResolved || !state || state.phase !== 'NIGHT' || state.nightStep !== 'detective') return;
     stepResolved = true;
     clearHostTimers();
-    closeNightStep(narrate('sleep_detective', {}, 'Thám Tử đã kiểm tra xong. Xin mời Thám Tử nhắm mắt lại.'));
+    closeNightStep(narrate('sleep_detective', {}, 'Thám Tử đã kiểm tra xong. Xin mời Thám Tử nhắm mắt lại.'), 'sleep_detective');
   }
 
   function runWitchStep() {
@@ -2484,11 +2556,15 @@
       st.storyTheme === 'classic' && !st.dynamicEvents
         ? 'Phù Thủy ơi, hãy mở mắt dậy để sử dụng bình thuốc của mình.'
         : narrate('call_witch', {}, 'Phù Thủy ơi, hãy mở mắt dậy để sử dụng bình thuốc của mình.');
-    setBotSpeech(callTxt, () => {
-      if (!aliveWitch || aliveWitch.isDemo) {
-        armStepTimer(() => finishWitchStep(false, null), fakeActDelay('witch'));
-      }
-    });
+    setBotSpeech(
+      callTxt,
+      () => {
+        if (!aliveWitch || aliveWitch.isDemo) {
+          armStepTimer(() => finishWitchStep(false, null), fakeActDelay('witch'));
+        }
+      },
+      { promptKey: 'call_witch' }
+    );
   }
 
   function finishWitchStep(useSave, poisonTargetId) {
@@ -2497,7 +2573,7 @@
     clearHostTimers();
     let didSave = false;
     let didPoison = false;
-    if (useSave && state.witchPotions.save) {
+    if (useSave && state.witchPotions.save && !state.nightActions.alphaConvert) {
       state.nightActions.witchSave = true;
       state.witchPotions.save = false;
       didSave = true;
@@ -2510,6 +2586,10 @@
       didPoison = true;
       addLog(`Phù Thủy dùng Bình Độc lên ${describe(byId(poisonTargetId))}.`, { icon: '☠️', secret: true });
     }
+    state.witchState = {
+      saveUsed: !state.witchPotions.save,
+      poisonUsed: !state.witchPotions.poison
+    };
     syncPlayerFlags();
     if (!didSave && !didPoison) addLog('Phù Thủy không dùng bình nào đêm nay.', { icon: '🧪', secret: true });
 
@@ -2528,7 +2608,7 @@
       }
     } catch (_) {}
 
-    closeNightStep(narrate('sleep_witch', {}, 'Phù Thủy đã hành động xong. Xin mời Phù Thủy nhắm mắt lại.'));
+    closeNightStep(narrate('sleep_witch', {}, 'Phù Thủy đã hành động xong. Xin mời Phù Thủy nhắm mắt lại.'), 'sleep_witch');
   }
 
   // [G3] Pháp Sư Câm
@@ -2539,15 +2619,19 @@
       st.storyTheme === 'classic' && !st.dynamicEvents
         ? 'Pháp Sư Câm ơi, hãy thức dậy chọn một người bị khóa miệng vào ngày mai.'
         : narrate('call_spellcaster', {}, 'Pháp Sư Câm ơi, hãy thức dậy chọn một người bị khóa miệng vào ngày mai.');
-    setBotSpeech(callTxt, () => {
-      if (!aliveSC) {
-        armStepTimer(() => finishSpellcasterStep(null), fakeActDelay('spellcaster'));
-      } else if (aliveSC.isDemo) {
-        const candidates = state.players.filter((p) => p.alive && p.id !== state.lastSilencedId);
-        const pick = candidates[Math.floor(Math.random() * candidates.length)];
-        armStepTimer(() => finishSpellcasterStep(pick ? pick.id : null), fakeActDelay('spellcaster'));
-      }
-    });
+    setBotSpeech(
+      callTxt,
+      () => {
+        if (!aliveSC) {
+          armStepTimer(() => finishSpellcasterStep(null), fakeActDelay('spellcaster'));
+        } else if (aliveSC.isDemo) {
+          const candidates = state.players.filter((p) => p.alive && p.id !== state.lastSilencedId);
+          const pick = candidates[Math.floor(Math.random() * candidates.length)];
+          armStepTimer(() => finishSpellcasterStep(pick ? pick.id : null), fakeActDelay('spellcaster'));
+        }
+      },
+      { promptKey: 'call_spellcaster' }
+    );
   }
 
   function finishSpellcasterStep(targetId) {
@@ -2560,7 +2644,7 @@
       t ? `Pháp Sư Câm chọn khóa miệng ${describe(t)} vào ngày mai.` : 'Pháp Sư Câm không khóa miệng ai.',
       { icon: '🤐', secret: true }
     );
-    closeNightStep(narrate('sleep_spellcaster', {}, 'Pháp Sư Câm đã chọn xong. Xin mời Pháp Sư Câm nhắm mắt lại.'));
+    closeNightStep(narrate('sleep_spellcaster', {}, 'Pháp Sư Câm đã chọn xong. Xin mời Pháp Sư Câm nhắm mắt lại.'), 'sleep_spellcaster');
   }
 
   function runSerialKillerStep() {
@@ -2574,15 +2658,19 @@
             {},
             'Sát Nhân Độc Hành ơi, hãy mở mắt dậy và chọn 1 mục tiêu để ám sát đêm nay.'
           );
-    setBotSpeech(callTxt, () => {
-      if (!aliveSK) {
-        armStepTimer(() => finishSerialKillerStep(null), fakeActDelay('serial_killer'));
-      } else if (aliveSK.isDemo) {
-        const candidates = state.players.filter((p) => p.alive && p.id !== aliveSK.id);
-        const pick = candidates[Math.floor(Math.random() * candidates.length)];
-        armStepTimer(() => finishSerialKillerStep(pick ? pick.id : null), fakeActDelay('serial_killer'));
-      }
-    });
+    setBotSpeech(
+      callTxt,
+      () => {
+        if (!aliveSK) {
+          armStepTimer(() => finishSerialKillerStep(null), fakeActDelay('serial_killer'));
+        } else if (aliveSK.isDemo) {
+          const candidates = state.players.filter((p) => p.alive && p.id !== aliveSK.id);
+          const pick = candidates[Math.floor(Math.random() * candidates.length)];
+          armStepTimer(() => finishSerialKillerStep(pick ? pick.id : null), fakeActDelay('serial_killer'));
+        }
+      },
+      { promptKey: 'call_serial_killer' }
+    );
   }
 
   function finishSerialKillerStep(targetId) {
@@ -2592,7 +2680,7 @@
     state.nightActions.serialKillerTarget = targetId || null;
     const t = targetId ? byId(targetId) : null;
     addLog(t ? `Sát Nhân chọn ám sát ${describe(t)}.` : 'Sát Nhân không ám sát ai.', { icon: '🗡️', secret: true });
-    closeNightStep(narrate('sleep_serial_killer', {}, 'Sát Nhân đã chọn xong mục tiêu. Xin mời Sát Nhân nhắm mắt lại.'));
+    closeNightStep(narrate('sleep_serial_killer', {}, 'Sát Nhân đã chọn xong mục tiêu. Xin mời Sát Nhân nhắm mắt lại.'), 'sleep_serial_killer');
   }
 
   function skipNightStep() {
@@ -2654,6 +2742,7 @@
         player.alive &&
         player.roleId === 'alpha_wolf'
       ) {
+        if (state.alphaWolfConvertUsed || !state.nightActions.wolfTarget) return;
         finishAlphaWolfStep(Boolean(payload.convert));
         return;
       }
@@ -2867,14 +2956,17 @@
       if (converted) {
         const before = roleNameOf(converted);
         converted.roleId = 'werewolf';
+        converted.convertedReason = 'alpha';
         state.alphaWolfConvertUsed = true;
+        state.alphaWolfState = { curseUsed: true };
         convertedWolfId = converted.id;
         addLog(`Sói Đầu Đàn nguyền hóa thành công ${converted.name} (${before}) thành Ma Sói!`, {
           icon: '🩸',
           secret: true
         });
+        const loverSet = new Set(Array.isArray(state.lovers) && state.lovers.includes(converted.id) ? state.lovers : []);
         state.players.forEach((p) => {
-          if (p.id === converted.id || isWolfRole(p.roleId)) {
+          if (p.id === converted.id || isWolfRole(p.roleId) || loverSet.has(p.id)) {
             sendSecretToPlayer(p);
           }
         });
@@ -2897,14 +2989,16 @@
       } else if (victim && victim.alive && victim.roleId === 'cursed_villager') {
         // [G3] Bán Sói bị Sói cắn -> không chết, thức tỉnh thành Ma Sói
         victim.roleId = 'werewolf';
+        victim.convertedReason = 'cursed';
         convertedWolfId = victim.id;
         addLog(`🐺 ${victim.name} (Bán Sói) bị Ma Sói cắn nhưng không chết — đã thức tỉnh thành Ma Sói!`, {
           icon: '🌘',
           secret: true
         });
         sendSecretToPlayer(victim, { converted: true, convertedReason: 'cursed' });
+        const loverSet = new Set(Array.isArray(state.lovers) && state.lovers.includes(victim.id) ? state.lovers : []);
         state.players.forEach((p) => {
-          if (p.id !== victim.id && isWolfRole(p.roleId)) {
+          if ((p.id !== victim.id && isWolfRole(p.roleId)) || (p.id !== victim.id && loverSet.has(p.id))) {
             sendSecretToPlayer(p);
           }
         });
@@ -3022,6 +3116,7 @@
       addLog(`Đêm qua ${deadPlayers.length} người thiệt mạng: ${names}.`, { icon: '💀', phase: 'day' });
     }
 
+    const dawnFollowUpKeys = [];
     if (scTarget && scTarget.alive) {
       const silencedMsg = narrate(
         'dawn_silenced_addendum',
@@ -3030,11 +3125,13 @@
       );
       if (silencedMsg) announcement += ` ${silencedMsg}`;
       state.lastDawnSummary += ` 🤐 ${scTarget.name} bị khóa miệng hôm nay.`;
+      dawnFollowUpKeys.push('night_silenced');
     }
 
     if (state.nightNumber === 1 && (state.rolesConfig.cupid || 0) > 0 && (state.lovers || []).length === 2) {
       announcement +=
         ' Đêm qua Thần Tình Yêu đã se duyên cho một cặp đôi. Mọi người hãy giữ thẻ bài để kiểm tra xem mình có được se duyên không nhé!';
+      dawnFollowUpKeys.push('cupid_paired_notice');
     }
 
     const hunters = deadPlayers.filter((p) => p.roleId === 'hunter');
@@ -3048,9 +3145,20 @@
     } else {
       state.phase = 'DAY';
     }
-    setFlow('dawn', { announcement });
+    const dawnPromptKey = deadPlayers.length === 0 ? 'morning_peaceful' : 'morning_deaths_intro';
+    const dawnDramatic = deadPlayers.length > 0;
+    setFlow('dawn', {
+      announcement,
+      promptKey: dawnPromptKey,
+      followUpKeys: dawnFollowUpKeys,
+      dramaticReveal: dawnDramatic
+    });
     hooks.renderHost?.();
-    setBotSpeech(announcement, afterDawnAnnouncement);
+    setBotSpeech(announcement, afterDawnAnnouncement, {
+      promptKey: dawnPromptKey,
+      followUpKeys: dawnFollowUpKeys,
+      dramaticReveal: dawnDramatic
+    });
   }
 
   function afterDawnAnnouncement() {
@@ -3167,11 +3275,15 @@
             `Khoan đã! ${actor.name} là Thợ Săn. Xin mời ${actor.name} hô bắn ở ngoài rồi bấm chọn tên người bị bắn ngay trên điện thoại của mình!`
           );
 
-    setBotSpeech(speech, () => {
-      if (actor.isDemo) {
-        armStepTimer(() => resolveHunterShot(null), 1800);
-      }
-    });
+    setBotSpeech(
+      speech,
+      () => {
+        if (actor.isDemo) {
+          armStepTimer(() => resolveHunterShot(null), 1800);
+        }
+      },
+      { promptKey: role === 'avenger' ? 'avenger_trigger' : 'hunter_trigger' }
+    );
   }
 
   function resolveHunterShot(targetId) {
@@ -3186,6 +3298,7 @@
     state.avengerPending = null;
 
     let text;
+    let promptKey;
     const target = targetId ? state.players.find((p) => p.id === targetId && p.alive) : null;
     if (target) {
       try {
@@ -3214,6 +3327,7 @@
 
       const cm = chainText(chain);
       if (revengeRole === 'avenger') {
+        promptKey = 'avenger_pull';
         text = `${narrate(
           'avenger_pull',
           { name: actorName, targetName: target.name },
@@ -3221,6 +3335,7 @@
         )}${cm}`;
         state.lastDawnSummary += ` ⚔️ Kẻ Báo Thù kéo theo ${target.name}.${cm}`;
       } else {
+        promptKey = 'hunter_shot';
         text = `${narrate(
           'hunter_pull',
           { name: actorName, targetName: target.name },
@@ -3229,16 +3344,18 @@
         state.lastDawnSummary += ` 🏹 Thợ Săn bắn hạ ${target.name}.${cm}`;
       }
     } else if (revengeRole === 'avenger') {
+      promptKey = 'avenger_skip';
       addLog(`Kẻ Báo Thù ${actorName} không kéo theo ai.`, { icon: '⚔️' });
       text = `Kẻ Báo Thù ${actorName} quyết định không kéo theo ai.`;
     } else {
+      promptKey = 'hunter_skip';
       addLog(`Thợ Săn ${actorName} quyết định không bắn ai.`, { icon: '🏹' });
       text = `Thợ Săn ${actorName} quyết định không bắn ai.`;
     }
 
-    setFlow('after_hunter', { next: nextAfter, text });
+    setFlow('after_hunter', { next: nextAfter, text, promptKey });
     hooks.renderHost?.();
-    setBotSpeech(text, () => afterHunterResolved(nextAfter));
+    setBotSpeech(text, () => afterHunterResolved(nextAfter), { promptKey });
   }
 
   function skipRevenge() {
@@ -3282,7 +3399,8 @@
         'sheriff_election_start',
         {},
         'Đã đến lúc bầu Trưởng Làng! Mọi người hãy chọn ứng cử viên trên điện thoại — Trưởng Làng sẽ nắm giữ 1,5 phiếu quyền lực.'
-      )
+      ),
+      { promptKey: 'sheriff_election' }
     );
   }
 
@@ -3317,7 +3435,9 @@
       // Hòa phiếu bầu Trưởng Làng: chọn ngẫu nhiên hoặc giữ để Quản Trò chọn? Thông báo hòa để Quản Trò quyết hoặc random
       const tiedStr = joinNames(tally.leaders.map((id) => (byId(id) || {}).name || '?'));
       addLog(`Bầu Trưởng Làng hòa phiếu giữa ${tiedStr}. Quản Trò có thể chỉ định hoặc bỏ qua.`, { icon: '🎖️' });
-      setBotSpeech(`Bầu Trưởng Làng đang hòa phiếu giữa ${tiedStr}! Quản Trò hãy chọn Trưởng Làng hoặc bỏ qua.`);
+      setBotSpeech(`Bầu Trưởng Làng đang hòa phiếu giữa ${tiedStr}! Quản Trò hãy chọn Trưởng Làng hoặc bỏ qua.`, {
+        promptKey: 'sheriff_election'
+      });
     }
   }
 
@@ -3350,10 +3470,10 @@
       { name: target.name },
       `Chúc mừng ${target.name} đã được cả làng tin tưởng bầu làm Trưởng Làng, nắm giữ 1,5 phiếu quyền lực!`
     );
-    setFlow('after_sheriff_election', { text });
+    setFlow('after_sheriff_election', { text, promptKey: 'sheriff_elected' });
     syncStateToClients();
     hooks.renderHost?.();
-    setBotSpeech(text, () => proceedAfterDawnPhase());
+    setBotSpeech(text, () => proceedAfterDawnPhase(), { promptKey: 'sheriff_elected' });
   }
 
   function skipSheriffElection() {
@@ -3365,10 +3485,10 @@
     syncPlayerFlags();
     addLog('🎖️ Không bầu Trưởng Làng trong ván này.', { icon: '🎖️' });
     const text = narrate('sheriff_skipped', {}, 'Cả làng quyết định không bầu Trưởng Làng.');
-    setFlow('after_sheriff_election', { text });
+    setFlow('after_sheriff_election', { text, promptKey: 'sheriff_skipped' });
     syncStateToClients();
     hooks.renderHost?.();
-    setBotSpeech(text, () => proceedAfterDawnPhase());
+    setBotSpeech(text, () => proceedAfterDawnPhase(), { promptKey: 'sheriff_skipped' });
   }
 
   function triggerSheriffTransfer(nextAction) {
@@ -3393,7 +3513,8 @@
           const pick = alive[Math.floor(Math.random() * alive.length)];
           armStepTimer(() => resolveSheriffTransfer(pick ? pick.id : null), 1500);
         }
-      }
+      },
+      { promptKey: 'sheriff_transfer_prompt' }
     );
   }
 
@@ -3404,8 +3525,10 @@
     state.pendingSheriffNext = null;
     const target = targetId ? state.players.find((p) => p.id === targetId && p.alive) : null;
     let text;
+    let promptKey;
     if (target) {
       state.sheriffId = target.id;
+      promptKey = 'sheriff_transfer';
       addLog(`🎖️ Huy hiệu Trưởng Làng được trao lại cho ${target.name}!`, { icon: '🎖️' });
       text = narrate(
         'sheriff_transfer',
@@ -3414,17 +3537,22 @@
       );
     } else {
       state.sheriffId = null;
+      promptKey = 'sheriff_transfer_none';
       addLog('🎖️ Huy hiệu Trưởng Làng bị hủy bỏ.', { icon: '🎖️' });
       text = narrate('sheriff_transfer_none', {}, 'Huy hiệu Trưởng Làng đã bị hủy bỏ.');
     }
     syncPlayerFlags();
-    setFlow('after_sheriff_transfer', { nextAction, text });
+    setFlow('after_sheriff_transfer', { nextAction, text, promptKey });
     syncStateToClients();
     hooks.renderHost?.();
-    setBotSpeech(text, () => {
-      if (nextAction === 'NEXT_NIGHT') proceedAfterLynchPhase();
-      else proceedAfterDawnPhase();
-    });
+    setBotSpeech(
+      text,
+      () => {
+        if (nextAction === 'NEXT_NIGHT') proceedAfterLynchPhase();
+        else proceedAfterDawnPhase();
+      },
+      { promptKey }
+    );
   }
 
   // ==================== LAST WORDS [G2] ====================
@@ -3449,7 +3577,7 @@
       { name: namesStr, names: namesStr },
       `Trước khi rời cuộc chơi, ${namesStr} có ${Math.round(durationMs / 1000)} giây nói lời trăng trối cuối cùng!`
     );
-    setBotSpeech(speech);
+    setBotSpeech(speech, { promptKey: 'last_words' });
     armTimer('lastWords', durationMs, () => skipLastWords());
   }
 
@@ -3534,9 +3662,9 @@
 
     if (revengeEntries.length > 0) setupRevengeQueue(revengeEntries, 'NEXT_NIGHT');
 
-    setFlow('after_lynch', { text: baseText });
+    setFlow('after_lynch', { text: baseText, promptKey: 'vote_eliminated_intro', dramaticReveal: true });
     hooks.renderHost?.();
-    setBotSpeech(baseText, afterLynchAnnouncement);
+    setBotSpeech(baseText, afterLynchAnnouncement, { promptKey: 'vote_eliminated_intro', dramaticReveal: true });
   }
 
   function afterLynchAnnouncement() {
@@ -3565,9 +3693,13 @@
       st.storyTheme === 'classic' && !st.dynamicEvents
         ? 'Hôm nay không có ai bị treo cổ. Màn đêm lại chuẩn bị buông xuống...'
         : narrate('day_no_lynch', {}, 'Hôm nay không có ai bị treo cổ. Màn đêm lại chuẩn bị buông xuống...');
-    setBotSpeech(speech, () => {
-      armStepTimer(() => beginNextNight(), 1100);
-    });
+    setBotSpeech(
+      speech,
+      () => {
+        armStepTimer(() => beginNextNight(), 1100);
+      },
+      { promptKey: 'day_no_lynch' }
+    );
   }
 
   // ==================== WIN CONDITION & GAME OVER ====================
@@ -3608,9 +3740,10 @@
       } catch (_) {}
     }
 
-    setFlow('game_over', { msg: winMsg });
+    const winPromptKey = winner ? `game_over_${winner}` : null;
+    setFlow('game_over', { msg: winMsg, promptKey: winPromptKey });
     hooks.renderHost?.();
-    setBotSpeech(winMsg);
+    setBotSpeech(winMsg, { promptKey: winPromptKey });
   }
 
   function checkWinCondition() {
@@ -3786,13 +3919,17 @@
         advanceNightStep();
         break;
       case 'dawn':
-        setBotSpeech(data.announcement || state.botText, afterDawnAnnouncement);
+        setBotSpeech(data.announcement || state.botText, afterDawnAnnouncement, {
+          promptKey: data.promptKey,
+          followUpKeys: data.followUpKeys,
+          dramaticReveal: data.dramaticReveal
+        });
         break;
       case 'hunter_wait':
         triggerHunterPrompt();
         break;
       case 'after_hunter':
-        setBotSpeech(data.text || 'Đã hành động xong.', () => afterHunterResolved(data.next));
+        setBotSpeech(data.text || 'Đã hành động xong.', () => afterHunterResolved(data.next), { promptKey: data.promptKey });
         break;
       case 'sheriff_election':
         setBotSpeech(
@@ -3800,38 +3937,48 @@
             'sheriff_election_start',
             {},
             'Đã đến lúc bầu Trưởng Làng! Mọi người hãy chọn ứng cử viên trên điện thoại.'
-          )
+          ),
+          { promptKey: 'sheriff_election' }
         );
         break;
       case 'after_sheriff_election':
-        setBotSpeech(data.text || state.botText, () => proceedAfterDawnPhase());
+        setBotSpeech(data.text || state.botText, () => proceedAfterDawnPhase(), { promptKey: data.promptKey });
         break;
       case 'sheriff_transfer':
         triggerSheriffTransfer(state.pendingSheriffNext || data.nextAction || 'DAY');
         break;
       case 'after_sheriff_transfer':
-        setBotSpeech(data.text || state.botText, () => {
-          if ((data.nextAction || 'DAY') === 'NEXT_NIGHT') proceedAfterLynchPhase();
-          else proceedAfterDawnPhase();
-        });
+        setBotSpeech(
+          data.text || state.botText,
+          () => {
+            if ((data.nextAction || 'DAY') === 'NEXT_NIGHT') proceedAfterLynchPhase();
+            else proceedAfterDawnPhase();
+          },
+          { promptKey: data.promptKey }
+        );
         break;
       case 'last_words': {
         const lw = state.lastWords;
         const rem = lw && lw.endsAt ? Math.max(1000, lw.endsAt - Date.now()) : 5000;
         speechPrefix = '';
-        setBotSpeech(state.botText || 'Tiếp tục Lời Trăng Trối.');
+        setBotSpeech(state.botText || 'Tiếp tục Lời Trăng Trối.', { promptKey: 'last_words' });
         armTimer('lastWords', rem, () => skipLastWords());
         break;
       }
       case 'after_lynch':
-        setBotSpeech(data.text || 'Cả làng đã biểu quyết xong.', afterLynchAnnouncement);
+        setBotSpeech(data.text || 'Cả làng đã biểu quyết xong.', afterLynchAnnouncement, {
+          promptKey: data.promptKey || 'vote_eliminated_intro',
+          dramaticReveal: Boolean(data.dramaticReveal)
+        });
         break;
       case 'to_night':
         beginNextNight();
         break;
       case 'day':
         speechPrefix = '';
-        setBotSpeech('Bot Quản Trò đã quay lại, ván đấu tiếp tục! Mời cả làng tiếp tục thảo luận và bỏ phiếu.');
+        setBotSpeech('Bot Quản Trò đã quay lại, ván đấu tiếp tục! Mời cả làng tiếp tục thảo luận và bỏ phiếu.', {
+          promptKey: 'resume_day'
+        });
         armVoteLockTimer();
         armDayDeadline({ resumed: true });
         syncStateToClients();
